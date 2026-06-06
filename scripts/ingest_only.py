@@ -87,3 +87,19 @@ def inserir_dados(spark: SparkSession) -> None:
     )
     total = df.count()
     print(f"📥  {total:,} linhas lidas de {RAW_PATH}")
+    df.writeTo(FULL_TABLE).append()
+    print("✅  Ingestão concluída.")
+
+
+def main() -> None:
+    spark = criar_spark_session()
+    try:
+        criar_tabela(spark)
+        inserir_dados(spark)
+        print("🏁  ingest_only concluído com sucesso!")
+    finally:
+        spark.stop()
+
+
+if __name__ == "__main__":
+    main()
