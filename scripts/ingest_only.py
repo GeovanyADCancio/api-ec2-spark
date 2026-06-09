@@ -1,7 +1,7 @@
 """
-ingest_only.py
+ingest_only.py file
 Executa apenas a criação da tabela Iceberg e a ingestão dos dados brutos.
-Usado pelo endpoint POST /run/ingest da FastAPI.
+Usado pelo endpoint POST /run/ingest da FastAPI.    dfasd
 """
 
 from pyspark.sql import SparkSession
