@@ -1,0 +1,9 @@
+FROM apache/airflow:2.9.1-python3.11
+
+USER root
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+RUN pip install --no-cache-dir \
+    apache-airflow-providers-http==4.10.0 \
+    apache-airflow-providers-amazon==8.20.0

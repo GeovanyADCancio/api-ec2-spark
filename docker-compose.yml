@@ -1,0 +1,122 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Âncora: configuração comum a todos os serviços Airflow
+# ─────────────────────────────────────────────────────────────────────────────
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+
+    # Credenciais AWS — o Airflow precisa para invocar a Lambda
+    # Em produção: use IAM Role. Na aula: variáveis de ambiente
+    AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_DEFAULT_REGION:    ${AWS_DEFAULT_REGION:-sa-east-1}
+
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  networks:
+    - lakehouse_net
+  depends_on:
+    &airflow-common-depends-on
+    postgres_airflow:
+      condition: service_healthy
+
+
+services:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Banco de metadados do Airflow
+  # Armazena: DAGs, histórico de execuções, XComs, conexões, variáveis
+  # ───────────────────────────────────────────────────────────────────────────
+  postgres_airflow:
+    image: postgres:15
+    container_name: metadata_airflow
+    environment:
+      POSTGRES_USER:     airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB:       airflow
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    networks:
+      - lakehouse_net
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Inicialização: migra o schema do banco e cria o usuário admin
+  # Roda uma vez e termina (service_completed_successfully)
+  # ───────────────────────────────────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --role Admin
+          --username admin
+          --password admin
+          --firstname Admin
+          --lastname Instrutor
+          --email admin@aula.com &&
+        airflow connections add ec2_spark_api
+          --conn-type http
+          --conn-host http://15.228.63.81
+          --conn-port 8000 || true &&
+        airflow connections add aws_default
+          --conn-type aws
+          --conn-extra '{\"region_name\": \"sa-east-1\"}' || true
+      "
+    user: "0:0"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Webserver: interface visual em localhost:8080
+  # ───────────────────────────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      postgres_airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Scheduler: lê as DAGs, agenda e executa as tasks
+  # ───────────────────────────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    depends_on:
+      postgres_airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+
+volumes:
+  postgres_airflow_data:   # persiste o banco entre reinicializações
+
+networks:
+  lakehouse_net:
+    name: lakehouse_net
